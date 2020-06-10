@@ -1,32 +1,90 @@
 ; haribote-os boot asm
 ; TAB=4
 
+[INSTRSET "i486p"]				; 使用486指令
+
+VBEMODE	EQU		0x105			; 1024 x 768 x 8bit彩色
+; VBE的画面模式
+;	0x100 :  640 x 400 x 8bit彩色
+;	0x101 :  640 x 480 x 8bit彩色
+;	0x103 :  800 x 600 x 8bit彩色
+;	0x105 : 1024 x 768 x 8bit彩色
+;	0x107 : 1280 x 1024 x 8bit彩色
+
 BOTPAK	EQU		0x00280000		; bootpack的地址
 DSKCAC	EQU		0x00100000		; 
 DSKCAC0	EQU		0x00008000		; 
 
-; 有关BOOT_INFO
-CYLS	EQU		0x0ff0			; 保存柱面数
-LEDS	EQU		0x0ff1			; 保存键盘上各种指示灯的状态
-VMODE	EQU		0x0ff2			; 保存关于颜色数目的信息，颜色的位数
-SCRNX	EQU		0x0ff4			; 保存分辨率X
-SCRNY	EQU		0x0ff6			; 保存分辨率Y
-VRAM	EQU		0x0ff8			; 保存图像缓冲区的开始地址
+; 关于BOOT_INFO的信息
+CYLS	EQU		0x0ff0			; 保存柱面数的地址
+LEDS	EQU		0x0ff1			; 保存键盘上各种指示灯的状态的地址
+VMODE	EQU		0x0ff2			; 保存关于颜色数目的信息（颜色的位数）的地址
+SCRNX	EQU		0x0ff4			; 保存分辨率X的地址
+SCRNY	EQU		0x0ff6			; 保存分辨率Y的地址
+VRAM	EQU		0x0ff8			; 保存图像缓冲区的开始地址的地址
 
-		ORG		0xc200			; 加载到指定内存地址0xc200
+		ORG		0xc200			; 加载到指定的内存
 
-; BIOS功能调用0x10
+; 以下为VBE功能调用，确认机器是否支持VBE
 
+		MOV		AX,0x9000
+		MOV		ES,AX
+		MOV		DI,0			; ES:DI 指向VBE信息块的地址
+		MOV		AX,0x4f00		; AH=0x4f :VBE标准，AH必须等于0x4f
+		INT		0x10
+		CMP		AX,0x004f		; AH=0x00调用成功，若AL=0x4f表示支持VBE
+		JNE		scrn320
+
+; 检查VBE的版本
+
+		MOV		AX,[ES:DI+4]
+		CMP		AX,0x0200		; 2.0或以上的版本
+		JB		scrn320			; if (AX < 0x0200) goto scrn320
+
+; 获取VBE某个特定模式的信息，该信息会被写入ES:DI开始的256字节中
+
+		MOV		CX,VBEMODE		; 画面模式号码
+		MOV		AX,0x4f01		; AH=0x4f :VBE标准，AH必须等于0x4f
+		INT		0x10
+		CMP		AX,0x004f		; AH=0x00调用成功，若AL=0x4f表示支持VBE
+		JNE		scrn320
+
+; 特定模式信息的确认
+
+		CMP		BYTE [ES:DI+0x19],8
+		JNE		scrn320
+		CMP		BYTE [ES:DI+0x1b],4
+		JNE		scrn320
+		MOV		AX,[ES:DI+0x00]
+		AND		AX,0x0080		; 检查模式属性的bit7是否为0
+		JZ		scrn320
+
+; 切换画面模式
+
+		MOV		BX,VBEMODE+0x4000
+		MOV		AX,0x4f02		; AH=0x4f :VBE标准，AH必须等于0x4f
+		INT		0x10			; AL=0x02设置VBE模式的功能调用
+		MOV		BYTE [VMODE],8	; 保存画面模式
+		MOV		AX,[ES:DI+0x12]	; 分辨率X
+		MOV		[SCRNX],AX
+		MOV		AX,[ES:DI+0x14]	; 分辨率Y
+		MOV		[SCRNY],AX
+		MOV		EAX,[ES:DI+0x28]; VRAM地址
+		MOV		[VRAM],EAX
+		JMP		keystatus
+
+scrn320:
 		MOV		AL,0x13			; 显示方式为 320x200 256色图形（VGA）
 		MOV		AH,0x00			; AH=0x00 :设置显示方式
-		INT		0x10
-		MOV		BYTE [VMODE],8	; 保存画面信息
+		INT		0x10			; BIOS功能调用0x10
+		MOV		BYTE [VMODE],8	; 保存画面模式
 		MOV		WORD [SCRNX],320
 		MOV		WORD [SCRNY],200
 		MOV		DWORD [VRAM],0x000a0000
 
-; BIOS功能调用0x16
+; 获取键盘上各种指示灯的状态
 
+keystatus:
 		MOV		AH,0x02			; AH=0x02 :获取键盘标志字节
 		INT		0x16 			; keyboard BIOS
 		MOV		[LEDS],AL		; 键盘标志字节保存到[LEDS]
@@ -55,16 +113,14 @@ VRAM	EQU		0x0ff8			; 保存图像缓冲区的开始地址
 
 ; 切换到保护模式
 
-[INSTRSET "i486p"]				; 使用486指令
-
-		LGDT	[GDTR0]			; 设定临时GDT
+		LGDT	[GDTR0]			; 设定临时的GDT
 		MOV		EAX,CR0
 		AND		EAX,0x7fffffff	; 设bit31为0（禁止分页）
 		OR		EAX,0x00000001	; 设bit0为1（切换到保护模式）
 		MOV		CR0,EAX
 		JMP		pipelineflush
 pipelineflush:
-		MOV		AX,1*8			; 可读写的段 32bit
+		MOV		AX,1*8			;  可读写的段 32bit
 		MOV		DS,AX
 		MOV		ES,AX
 		MOV		FS,AX
@@ -75,7 +131,7 @@ pipelineflush:
 
 		MOV		ESI,bootpack	; 源地址
 		MOV		EDI,BOTPAK		; 目的地址
-		MOV		ECX,512*1024/4	; 数据大小
+		MOV		ECX,512*1024/4	; 数据大小（以双字为单位）
 		CALL	memcpy
 
 ; 磁盘数据最终转送到它本来的位置去
@@ -84,16 +140,16 @@ pipelineflush:
 
 		MOV		ESI,0x7c00		; 源地址
 		MOV		EDI,DSKCAC		; 目的地址
-		MOV		ECX,512/4		; 数据大小（转送数据大小是以双字为单位的）
+		MOV		ECX,512/4		; 数据大小（以双字为单位）
 		CALL	memcpy
 
 ; 剩下的所有
 
 		MOV		ESI,DSKCAC0+512	; 源地址
 		MOV		EDI,DSKCAC+512	; 目的地址
-		MOV		ECX,0			; 初始化0
+		MOV		ECX,0			; ECX初始化0
 		MOV		CL,BYTE [CYLS]	; 读取柱面数
-		IMUL	ECX,512*18*2/4	; 数据大小（转送数据大小是以双字为单位的）
+		IMUL	ECX,512*18*2/4	; 数据大小（以双字为单位）
 		SUB		ECX,512/4		; 减去启动区的512字节
 		CALL	memcpy
 

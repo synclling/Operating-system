@@ -5,11 +5,11 @@ CYLS	EQU		10				; 柱面数，10个柱面
 
 		ORG		0x7c00			; 加载到指定内存地址0x7c00
 
-; 以下为标准FAT12格式的软盘
+; 以下为标准的FAT12格式的软盘
 
 		JMP		entry
 		DB		0x90
-		DB		"HARIBOTE"		; 启动区的名称可以是任意的字符串（8字节）
+		DB		"HARIBOTE"		; 启动区的名称可以时任意的字符串（8字节）
 		DW		512				; 每个扇区（sector）的大小（必须为512字节）
 		DB		1				; 簇（cluster）的大小（必须为1个扇区）
 		DW		1				; FAT的起始位置（一般从第一个扇区开始）
@@ -75,9 +75,9 @@ next:
 		CMP		CH,CYLS			; CH与CYLS比较
 		JB		readloop		; CH < CYLS时跳转readloop
 
+; haribote.sys开始运行
 
-
-
+		MOV		[0x0ff0],CH		; 记录IPL读取的柱面数
 		JMP		0xc200
 
 error:
@@ -98,7 +98,7 @@ msg:
 		DB		0x0a, 0x0a		; 2个换行
 		DB		"load error"
 		DB		0x0a			; 换行
-		DB		0
+		DB		0				; 结束符
 
 		RESB	0x7dfe-$		; 从这里到0x7dfe之前全部填充0x00
 
